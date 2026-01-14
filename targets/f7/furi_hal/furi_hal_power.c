@@ -69,6 +69,9 @@ void furi_hal_power_init(void) {
     LL_RCC_HSI_EnableInStopMode(); // Ensure that MR is capable of work in STOP0
 #endif
 
+    // TODO: Re-enable BQ27220 (fuel gauge) and BQ25896 (charger) initialization
+    // when hardware is available. Disabled to avoid I2C timeout delays.
+#if 0
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     // Find and init gauge
     size_t retry = 2;
@@ -99,6 +102,7 @@ void furi_hal_power_init(void) {
         retry--;
     }
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
+#endif
 
     FURI_LOG_I(TAG, "Init OK");
 }
@@ -265,6 +269,8 @@ void furi_hal_power_sleep(void) {
 }
 
 uint8_t furi_hal_power_get_pct(void) {
+    // TODO: Remove this guard when BQ27220 is re-enabled
+    if(!furi_hal_power.gauge_ok) return 0;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     uint8_t ret = bq27220_get_state_of_charge(&furi_hal_i2c_handle_power);
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -272,6 +278,8 @@ uint8_t furi_hal_power_get_pct(void) {
 }
 
 uint8_t furi_hal_power_get_bat_health_pct(void) {
+    // TODO: Remove this guard when BQ27220 is re-enabled
+    if(!furi_hal_power.gauge_ok) return 0;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     uint8_t ret = bq27220_get_state_of_health(&furi_hal_i2c_handle_power);
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -279,6 +287,8 @@ uint8_t furi_hal_power_get_bat_health_pct(void) {
 }
 
 bool furi_hal_power_is_charging(void) {
+    // TODO: Remove this guard when BQ25896 is re-enabled
+    if(!furi_hal_power.charger_ok) return false;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     bool ret = bq25896_is_charging(&furi_hal_i2c_handle_power);
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -286,6 +296,8 @@ bool furi_hal_power_is_charging(void) {
 }
 
 bool furi_hal_power_is_charging_done(void) {
+    // TODO: Remove this guard when BQ25896 is re-enabled
+    if(!furi_hal_power.charger_ok) return false;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     bool ret = bq25896_is_charging_done(&furi_hal_i2c_handle_power);
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -366,6 +378,8 @@ bool furi_hal_power_is_otg_enabled(void) {
 }
 
 float furi_hal_power_get_battery_charge_voltage_limit(void) {
+    // TODO: Remove this guard when BQ25896 is re-enabled
+    if(!furi_hal_power.charger_ok) return 0.0f;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     float ret = (float)bq25896_get_vreg_voltage(&furi_hal_i2c_handle_power) / 1000.0f;
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -394,6 +408,8 @@ void furi_hal_power_check_otg_status(void) {
 }
 
 uint32_t furi_hal_power_get_battery_remaining_capacity(void) {
+    // TODO: Remove this guard when BQ27220 is re-enabled
+    if(!furi_hal_power.gauge_ok) return 0;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     uint32_t ret = bq27220_get_remaining_capacity(&furi_hal_i2c_handle_power);
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -401,6 +417,8 @@ uint32_t furi_hal_power_get_battery_remaining_capacity(void) {
 }
 
 uint32_t furi_hal_power_get_battery_full_capacity(void) {
+    // TODO: Remove this guard when BQ27220 is re-enabled
+    if(!furi_hal_power.gauge_ok) return 0;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     uint32_t ret = bq27220_get_full_charge_capacity(&furi_hal_i2c_handle_power);
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -408,6 +426,8 @@ uint32_t furi_hal_power_get_battery_full_capacity(void) {
 }
 
 uint32_t furi_hal_power_get_battery_design_capacity(void) {
+    // TODO: Remove this guard when BQ27220 is re-enabled
+    if(!furi_hal_power.gauge_ok) return 0;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     uint32_t ret = bq27220_get_design_capacity(&furi_hal_i2c_handle_power);
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
@@ -416,6 +436,10 @@ uint32_t furi_hal_power_get_battery_design_capacity(void) {
 
 float furi_hal_power_get_battery_voltage(FuriHalPowerIC ic) {
     float ret = 0.0f;
+
+    // TODO: Remove this guard when power ICs are re-enabled
+    if(ic == FuriHalPowerICCharger && !furi_hal_power.charger_ok) return 0.0f;
+    if(ic == FuriHalPowerICFuelGauge && !furi_hal_power.gauge_ok) return 0.0f;
 
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     if(ic == FuriHalPowerICCharger) {
@@ -433,6 +457,10 @@ float furi_hal_power_get_battery_voltage(FuriHalPowerIC ic) {
 float furi_hal_power_get_battery_current(FuriHalPowerIC ic) {
     float ret = 0.0f;
 
+    // TODO: Remove this guard when power ICs are re-enabled
+    if(ic == FuriHalPowerICCharger && !furi_hal_power.charger_ok) return 0.0f;
+    if(ic == FuriHalPowerICFuelGauge && !furi_hal_power.gauge_ok) return 0.0f;
+
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     if(ic == FuriHalPowerICCharger) {
         ret = (float)bq25896_get_vbat_current(&furi_hal_i2c_handle_power) / 1000.0f;
@@ -448,6 +476,10 @@ float furi_hal_power_get_battery_current(FuriHalPowerIC ic) {
 
 static float furi_hal_power_get_battery_temperature_internal(FuriHalPowerIC ic) {
     float ret = 0.0f;
+
+    // TODO: Remove this guard when power ICs are re-enabled
+    if(ic == FuriHalPowerICCharger && !furi_hal_power.charger_ok) return 0.0f;
+    if(ic == FuriHalPowerICFuelGauge && !furi_hal_power.gauge_ok) return 0.0f;
 
     if(ic == FuriHalPowerICCharger) {
         // Linear approximation, +/- 5 C
@@ -468,6 +500,8 @@ float furi_hal_power_get_battery_temperature(FuriHalPowerIC ic) {
 }
 
 float furi_hal_power_get_usb_voltage(void) {
+    // TODO: Remove this guard when BQ25896 is re-enabled
+    if(!furi_hal_power.charger_ok) return 0.0f;
     furi_hal_i2c_acquire(&furi_hal_i2c_handle_power);
     float ret = (float)bq25896_get_vbus_voltage(&furi_hal_i2c_handle_power) / 1000.0f;
     furi_hal_i2c_release(&furi_hal_i2c_handle_power);
