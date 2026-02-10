@@ -2,8 +2,9 @@
 
 #include <furi_hal.h>
 
-#define CONTRAST_ERC 32
-#define CONTRAST_MGG 28
+// TODO: SSD1306/1315 contrast range is 0-255, tune these values
+#define CONTRAST_ERC 128
+#define CONTRAST_MGG 112
 
 uint8_t u8g2_gpio_and_delay_stm32(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* arg_ptr) {
     UNUSED(u8x8);
@@ -55,78 +56,84 @@ uint8_t u8x8_hw_spi_stm32(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* arg_
     return 1;
 }
 
-#define ST756X_CMD_ON_OFF           0b10101110 /**< 0:0 Switch Display ON/OFF: last bit */
-#define ST756X_CMD_SET_LINE         0b01000000 /**< 0:0 Set Start Line: last 6 bits  */
-#define ST756X_CMD_SET_PAGE         0b10110000 /**< 0:0 Set Page address: last 4 bits */
-#define ST756X_CMD_SET_COLUMN_MSB   0b00010000 /**< 0:0 Set Column MSB: last 4 bits */
-#define ST756X_CMD_SET_COLUMN_LSB   0b00000000 /**< 0:0 Set Column LSB: last 4 bits */
-#define ST756X_CMD_SEG_DIRECTION    0b10100000 /**< 0:0 Reverse scan direction of SEG: last bit */
-#define ST756X_CMD_INVERSE_DISPLAY  0b10100110 /**< 0:0 Invert display: last bit */
-#define ST756X_CMD_ALL_PIXEL_ON     0b10100100 /**< 0:0 Set all pixel on: last bit */
-#define ST756X_CMD_BIAS_SELECT      0b10100010 /**< 0:0 Select 1/9(0) or 1/7(1) bias: last bit */
-#define ST756X_CMD_R_M_W            0b11100000 /**< 0:0 Enter Read Modify Write mode: read+0, write+1 */
-#define ST756X_CMD_END              0b11101110 /**< 0:0 Exit Read Modify Write mode */
-#define ST756X_CMD_RESET            0b11100010 /**< 0:0 Software Reset */
-#define ST756X_CMD_COM_DIRECTION    0b11000000 /**< 0:0 Com direction reverse: +0b1000 */
-#define ST756X_CMD_POWER_CONTROL    0b00101000 /**< 0:0 Power control: last 3 bits VB:VR:VF */
-#define ST756X_CMD_REGULATION_RATIO 0b00100000 /**< 0:0 Regulation resistor ration: last 3bits */
-#define ST756X_CMD_SET_EV           0b10000001 /**< 0:0 Set electronic volume: 5 bits in next byte */
-#define ST756X_CMD_SET_BOOSTER \
-    0b11111000 /**< 0:0 Set Booster level, 4X(0) or 5X(1): last bit in next byte */
-#define ST756X_CMD_NOP 0b11100011 /**< 0:0 No operation */
+/* SSD1306/SSD1315 Command Definitions */
+#define SSD1306_CMD_DISPLAY_OFF        0xAE
+#define SSD1306_CMD_DISPLAY_ON         0xAF
+#define SSD1306_CMD_SET_CONTRAST       0x81
+#define SSD1306_CMD_ENTIRE_DISPLAY_OFF 0xA4
+#define SSD1306_CMD_ENTIRE_DISPLAY_ON  0xA5
+#define SSD1306_CMD_NORMAL_DISPLAY     0xA6
+#define SSD1306_CMD_INVERT_DISPLAY     0xA7
+#define SSD1306_CMD_SET_MUX_RATIO      0xA8
+#define SSD1306_CMD_SET_DISPLAY_OFFSET 0xD3
+#define SSD1306_CMD_SET_START_LINE     0x40
+#define SSD1306_CMD_SET_SEG_REMAP_OFF  0xA0
+#define SSD1306_CMD_SET_SEG_REMAP_ON   0xA1
+#define SSD1306_CMD_SET_COM_SCAN_INC   0xC0
+#define SSD1306_CMD_SET_COM_SCAN_DEC   0xC8
+#define SSD1306_CMD_SET_COM_PINS       0xDA
+#define SSD1306_CMD_SET_CLK_DIV        0xD5
+#define SSD1306_CMD_SET_PRECHARGE      0xD9
+#define SSD1306_CMD_SET_VCOMH          0xDB
+#define SSD1306_CMD_CHARGE_PUMP        0x8D
+#define SSD1306_CMD_SET_PAGE_ADDR      0xB0
+#define SSD1306_CMD_SET_LOW_COLUMN     0x00
+#define SSD1306_CMD_SET_HIGH_COLUMN    0x10
+#define SSD1306_CMD_SET_MEM_ADDR_MODE  0x20
 
+// TODO: Verify power save sequences work correctly on SSD1306/1315
 static const uint8_t u8x8_d_st756x_powersave0_seq[] = {
     U8X8_START_TRANSFER(), /* enable chip, delay is part of the transfer start */
-    U8X8_C(ST756X_CMD_ALL_PIXEL_ON | 0b0), /* all pixel off */
-    U8X8_C(ST756X_CMD_ON_OFF | 0b1), /* display on */
+    U8X8_C(SSD1306_CMD_ENTIRE_DISPLAY_OFF), /* resume from entire display on */
+    U8X8_C(SSD1306_CMD_DISPLAY_ON), /* display on */
     U8X8_END_TRANSFER(), /* disable chip */
     U8X8_END() /* end of sequence */
 };
 
 static const uint8_t u8x8_d_st756x_powersave1_seq[] = {
     U8X8_START_TRANSFER(), /* enable chip, delay is part of the transfer start */
-    U8X8_C(ST756X_CMD_ON_OFF | 0b0), /* display off */
-    U8X8_C(ST756X_CMD_ALL_PIXEL_ON | 0b1), /* all pixel on */
+    U8X8_C(SSD1306_CMD_DISPLAY_OFF), /* display off */
+    U8X8_C(SSD1306_CMD_ENTIRE_DISPLAY_ON), /* entire display on (power save) */
     U8X8_END_TRANSFER(), /* disable chip */
     U8X8_END() /* end of sequence */
 };
 
+// Flip sequences - SSD1306 uses same commands as ST756X for segment/COM remap
 static const uint8_t u8x8_d_st756x_flip0_seq[] = {
     U8X8_START_TRANSFER(), /* enable chip, delay is part of the transfer start */
-    U8X8_C(0x0a1), /* segment remap a0/a1*/
-    U8X8_C(0x0c0), /* c0: scan dir normal, c8: reverse */
+    U8X8_C(SSD1306_CMD_SET_SEG_REMAP_ON), /* segment remap a0/a1*/
+    U8X8_C(SSD1306_CMD_SET_COM_SCAN_INC), /* c0: scan dir normal, c8: reverse */
     U8X8_END_TRANSFER(), /* disable chip */
     U8X8_END() /* end of sequence */
 };
 
 static const uint8_t u8x8_d_st756x_flip1_seq[] = {
     U8X8_START_TRANSFER(), /* enable chip, delay is part of the transfer start */
-    U8X8_C(0x0a0), /* segment remap a0/a1*/
-    U8X8_C(0x0c8), /* c0: scan dir normal, c8: reverse */
+    U8X8_C(SSD1306_CMD_SET_SEG_REMAP_OFF), /* segment remap a0/a1*/
+    U8X8_C(SSD1306_CMD_SET_COM_SCAN_DEC), /* c0: scan dir normal, c8: reverse */
     U8X8_END_TRANSFER(), /* disable chip */
     U8X8_END() /* end of sequence */
 };
 
+// TODO: Verify timing values for SSD1306/1315, current values from ST7565
 static const u8x8_display_info_t u8x8_st756x_128x64_display_info = {
     .chip_enable_level = 0,
     .chip_disable_level = 1,
-    .post_chip_enable_wait_ns = 150, /* st7565 datasheet, table 26, tcsh */
-    .pre_chip_disable_wait_ns = 50, /* st7565 datasheet, table 26, tcss */
-    .reset_pulse_width_ms = 1,
-    .post_reset_wait_ms = 1,
-    .sda_setup_time_ns = 50, /* st7565 datasheet, table 26, tsds */
-    .sck_pulse_width_ns =
-        120, /* half of cycle time (100ns according to datasheet), AVR: below 70: 8 MHz, >= 70 --> 4MHz clock */
-    .sck_clock_hz =
-        4000000UL, /* since Arduino 1.6.0, the SPI bus speed in Hz. Should be  1000000000/sck_pulse_width_ns */
+    .post_chip_enable_wait_ns = 150,
+    .pre_chip_disable_wait_ns = 50,
+    .reset_pulse_width_ms = 10, /* SSD1306 needs stable reset, increased from 1ms */
+    .post_reset_wait_ms = 100,  /* SSD1306 needs 100ms after reset before commands */
+    .sda_setup_time_ns = 50,
+    .sck_pulse_width_ns = 120,
+    .sck_clock_hz = 4000000UL,
     .spi_mode = 0, /* active high, rising edge */
     .i2c_bus_clock_100kHz = 4,
-    .data_setup_time_ns = 40, /* st7565 datasheet, table 24, tds8 */
-    .write_pulse_width_ns = 80, /* st7565 datasheet, table 24, tcclw */
+    .data_setup_time_ns = 40,
+    .write_pulse_width_ns = 80,
     .tile_width = 16, /* width of 16*8=128 pixel */
     .tile_height = 8,
     .default_x_offset = 0,
-    .flipmode_x_offset = 4,
+    .flipmode_x_offset = 0, /* SSD1306 has no column offset */
     .pixel_width = 128,
     .pixel_height = 64};
 
@@ -141,9 +148,9 @@ uint8_t u8x8_d_st756x_common(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* a
         x = ((u8x8_tile_t*)arg_ptr)->x_pos;
         x *= 8;
         x += u8x8->x_offset;
-        u8x8_cad_SendCmd(u8x8, 0x010 | (x >> 4));
-        u8x8_cad_SendCmd(u8x8, 0x000 | (x & 15));
-        u8x8_cad_SendCmd(u8x8, 0x0b0 | (((u8x8_tile_t*)arg_ptr)->y_pos));
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_HIGH_COLUMN | (x >> 4));
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_LOW_COLUMN | (x & 15));
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_PAGE_ADDR | (((u8x8_tile_t*)arg_ptr)->y_pos));
 
         c = ((u8x8_tile_t*)arg_ptr)->cnt;
         c *= 8;
@@ -153,8 +160,8 @@ uint8_t u8x8_d_st756x_common(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* a
                 controller: It is not allowed to write beyond the display limits.
                 This is in fact an issue within flip mode.
             */
-        if(c + x > 132u) {
-            c = 132u;
+        if(c + x > 128u) {
+            c = 128u;
             c -= x;
         }
 
@@ -175,8 +182,8 @@ uint8_t u8x8_d_st756x_common(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* a
 #ifdef U8X8_WITH_SET_CONTRAST
     case U8X8_MSG_DISPLAY_SET_CONTRAST:
         u8x8_cad_StartTransfer(u8x8);
-        u8x8_cad_SendCmd(u8x8, ST756X_CMD_SET_EV);
-        u8x8_cad_SendArg(u8x8, arg_int >> 2); /* st7565 has range from 0 to 63 */
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CONTRAST);
+        u8x8_cad_SendArg(u8x8, arg_int); /* SSD1306 has full 0-255 range */
         u8x8_cad_EndTransfer(u8x8);
         break;
 #endif
@@ -187,39 +194,82 @@ uint8_t u8x8_d_st756x_common(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* a
 }
 
 void u8x8_d_st756x_init(u8x8_t* u8x8, uint8_t contrast, uint8_t regulation_ratio, bool bias) {
-    contrast = contrast & 0b00111111;
-    regulation_ratio = regulation_ratio & 0b111;
+    UNUSED(regulation_ratio);
+    UNUSED(bias);
 
     u8x8_cad_StartTransfer(u8x8);
-    // Reset
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_RESET);
-    // Bias: 1/7(0b1) or 1/9(0b0)
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_BIAS_SELECT | bias);
-    // Page, Line and Segment config
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_SEG_DIRECTION);
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_COM_DIRECTION | 0b1000);
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_SET_LINE);
-    // Set Regulation Ratio
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_REGULATION_RATIO | regulation_ratio);
-    // Set EV
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_SET_EV);
+
+    // Display off during init
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_DISPLAY_OFF);
+
+    // Set Memory Addressing Mode to Page Addressing (0x02)
+    // This is critical - SSD1306 defaults to horizontal mode!
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_MEM_ADDR_MODE);
+    u8x8_cad_SendArg(u8x8, 0x02);
+
+    // Set clock divide ratio and oscillator frequency
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CLK_DIV);
+    u8x8_cad_SendArg(u8x8, 0x80); // TODO: Tune clock if needed
+
+    // Set multiplex ratio (64 lines)
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_MUX_RATIO);
+    u8x8_cad_SendArg(u8x8, 0x3F);
+
+    // Set display offset
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_DISPLAY_OFFSET);
+    u8x8_cad_SendArg(u8x8, 0x00);
+
+    // Set start line
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_START_LINE | 0x00);
+
+    // Enable charge pump
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_CHARGE_PUMP);
+    u8x8_cad_SendArg(u8x8, 0x14); // Enable charge pump
+
+    // Set segment remap and COM scan direction
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_SEG_REMAP_OFF);
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_COM_SCAN_DEC);
+
+    // Set COM pins hardware configuration
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_COM_PINS);
+    u8x8_cad_SendArg(u8x8, 0x12); // TODO: May need 0x02 for some displays
+
+    // Set contrast
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CONTRAST);
     u8x8_cad_SendArg(u8x8, contrast);
-    // Enable power
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_POWER_CONTROL | 0b111);
+
+    // Set precharge period
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_PRECHARGE);
+    u8x8_cad_SendArg(u8x8, 0xF1); // TODO: Tune precharge if needed
+
+    // Set VCOMH deselect level
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_VCOMH);
+    u8x8_cad_SendArg(u8x8, 0x40); // TODO: Tune VCOMH if needed
+
+    // Resume from entire display on
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_ENTIRE_DISPLAY_OFF);
+
+    // Set normal display (not inverted)
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_NORMAL_DISPLAY);
+
+    // Display on
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_DISPLAY_ON);
 
     u8x8_cad_EndTransfer(u8x8);
 }
 
 void u8x8_d_st756x_set_contrast(u8x8_t* u8x8, int8_t contrast_offset) {
+    // TODO: Tune contrast values and offset scaling for SSD1306/1315
     uint8_t contrast = (furi_hal_version_get_hw_display() == FuriHalVersionDisplayMgg) ?
                            CONTRAST_MGG :
                            CONTRAST_ERC;
-    contrast += contrast_offset;
-    contrast = contrast & 0b00111111;
+    int16_t new_contrast = (int16_t)contrast + (int16_t)contrast_offset * 4;
+    if(new_contrast < 0) new_contrast = 0;
+    if(new_contrast > 255) new_contrast = 255;
 
     u8x8_cad_StartTransfer(u8x8);
-    u8x8_cad_SendCmd(u8x8, ST756X_CMD_SET_EV);
-    u8x8_cad_SendArg(u8x8, contrast);
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CONTRAST);
+    u8x8_cad_SendArg(u8x8, (uint8_t)new_contrast);
     u8x8_cad_EndTransfer(u8x8);
 }
 
@@ -234,22 +284,12 @@ uint8_t u8x8_d_st756x_flipper(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* 
         case U8X8_MSG_DISPLAY_INIT:
             u8x8_d_helper_display_init(u8x8);
             FuriHalVersionDisplay display = furi_hal_version_get_hw_display();
+            // TODO: SSD1306/1315 - regulation_ratio and bias params are ignored
+            // Contrast values may need tuning per display variant
             if(display == FuriHalVersionDisplayMgg) {
-                /* MGG v0+(ST7567)
-                 * EV = 32
-                 * RR = V0 / ((1 - (63 - EV) / 162) * 2.1)
-                 * RR = 10 / ((1 - (63 - 32) / 162) * 2.1) ~= 5.88 is 6 (0b110)
-                 * Bias = 1/9 (false)
-                 */
-                u8x8_d_st756x_init(u8x8, CONTRAST_MGG, 0b110, false);
+                u8x8_d_st756x_init(u8x8, CONTRAST_MGG, 0, false);
             } else {
-                /* ERC v1(ST7565) and v2(ST7567)
-                 * EV = 33
-                 * RR = V0 / ((1 - (63 - EV) / 162) * 2.1)
-                 * RR = 9.3 / ((1 - (63 - 32) / 162) * 2.1) ~= 5.47 is 5.5 (0b101)
-                 * Bias = 1/9 (false)
-                 */
-                u8x8_d_st756x_init(u8x8, CONTRAST_ERC, 0b101, false);
+                u8x8_d_st756x_init(u8x8, CONTRAST_ERC, 0, false);
             }
             break;
         case U8X8_MSG_DISPLAY_SET_FLIP_MODE:
