@@ -101,7 +101,7 @@ static const uint8_t u8x8_d_st756x_powersave1_seq[] = {
 // Flip sequences - SSD1306 uses same commands as ST756X for segment/COM remap
 static const uint8_t u8x8_d_st756x_flip0_seq[] = {
     U8X8_START_TRANSFER(), /* enable chip, delay is part of the transfer start */
-    U8X8_C(SSD1306_CMD_SET_SEG_REMAP_ON), /* segment remap a0/a1*/
+    U8X8_C(SSD1306_CMD_SET_SEG_REMAP_OFF), /* segment remap a0/a1*/
     U8X8_C(SSD1306_CMD_SET_COM_SCAN_INC), /* c0: scan dir normal, c8: reverse */
     U8X8_END_TRANSFER(), /* disable chip */
     U8X8_END() /* end of sequence */
@@ -109,7 +109,7 @@ static const uint8_t u8x8_d_st756x_flip0_seq[] = {
 
 static const uint8_t u8x8_d_st756x_flip1_seq[] = {
     U8X8_START_TRANSFER(), /* enable chip, delay is part of the transfer start */
-    U8X8_C(SSD1306_CMD_SET_SEG_REMAP_OFF), /* segment remap a0/a1*/
+    U8X8_C(SSD1306_CMD_SET_SEG_REMAP_ON), /* segment remap a0/a1*/
     U8X8_C(SSD1306_CMD_SET_COM_SCAN_DEC), /* c0: scan dir normal, c8: reverse */
     U8X8_END_TRANSFER(), /* disable chip */
     U8X8_END() /* end of sequence */
@@ -227,7 +227,7 @@ void u8x8_d_st756x_init(u8x8_t* u8x8, uint8_t contrast, uint8_t regulation_ratio
     u8x8_cad_SendArg(u8x8, 0x14); // Enable charge pump
 
     // Set segment remap and COM scan direction
-    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_SEG_REMAP_OFF);
+    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_SEG_REMAP_ON);
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_COM_SCAN_DEC);
 
     // Set COM pins hardware configuration
