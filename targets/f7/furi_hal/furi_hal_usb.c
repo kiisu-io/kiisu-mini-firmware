@@ -227,6 +227,10 @@ void furi_hal_usb_reinit(void) {
     furi_hal_usb_send_message(&msg);
 }
 
+bool furi_hal_usb_is_connected(void) {
+    return usb.connected;
+}
+
 void furi_hal_usb_set_state_callback(FuriHalUsbStateCallback cb, void* ctx) {
     UsbApiEventMessage msg = {
         .lock = api_lock_alloc_locked(),

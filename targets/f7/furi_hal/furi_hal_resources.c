@@ -199,7 +199,7 @@ void furi_hal_resources_init_early(void) {
 
     // Explicit, surviving reset, pulls
     LL_PWR_EnablePUPDCfg();
-    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_A, LL_PWR_GPIO_BIT_8); // gpio_vibro
+    // PA8 pull-down removed: pin repurposed as ADC input for battery voltage
     LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_8); // gpio_speaker
     LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_9); // gpio_infrared_tx
 
