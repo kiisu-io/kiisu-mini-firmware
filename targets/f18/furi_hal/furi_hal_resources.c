@@ -272,8 +272,8 @@ void furi_hal_resources_init_early(void) {
     LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_8); // gpio_speaker
 
     // SD Card stepdown control
-    furi_hal_gpio_write(&gpio_periph_power, 1);
-    furi_hal_gpio_init(&gpio_periph_power, GpioModeOutputOpenDrain, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_write(&gpio_periph_power, 0);
+    furi_hal_gpio_init(&gpio_periph_power, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
 
     // Display pins
     furi_hal_gpio_write(&gpio_display_rst_n, 0);
