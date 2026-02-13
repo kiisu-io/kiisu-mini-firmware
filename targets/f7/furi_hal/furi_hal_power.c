@@ -21,6 +21,8 @@
 
 #define TAG "FuriHalPower"
 
+const GpioPin gpio_periph_power = {.port = GPIOA, .pin = LL_GPIO_PIN_3};
+
 // Battery ADC configuration
 // PA8 = ADC1_IN15, with 1M:330k voltage divider (1:2 ratio)
 // Battery voltage range: ~3.0V (dead) to ~4.2V (full)
