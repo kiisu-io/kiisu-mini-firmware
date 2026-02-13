@@ -22,12 +22,12 @@
 #define TAG "FuriHalPower"
 
 // Battery ADC configuration
-// PA8 = ADC1_IN15, with 1M:1M voltage divider (1:2 ratio)
+// PA8 = ADC1_IN15, with 1M:330k voltage divider (1:2 ratio)
 // Battery voltage range: ~3.0V (dead) to ~4.2V (full)
 // At divider output: ~1.5V to ~2.1V
 // Using 2.5V ADC reference scale to avoid clipping at 4.2V
 #define FURI_HAL_POWER_BATTERY_ADC_CHANNEL FuriHalAdcChannel15
-#define FURI_HAL_POWER_BATTERY_VOLTAGE_DIVIDER_RATIO (2.0f)
+#define FURI_HAL_POWER_BATTERY_VOLTAGE_DIVIDER_RATIO (4.0f)
 #define FURI_HAL_POWER_BATTERY_MIN_VOLTAGE_MV (3300) // 0%
 #define FURI_HAL_POWER_BATTERY_MAX_VOLTAGE_MV (4200) // 100%
 #define FURI_HAL_POWER_BATTERY_CHARGE_DONE_MV (4150) // Charging considered done above this
@@ -69,7 +69,7 @@ static uint16_t furi_hal_power_get_battery_voltage_adc(void) {
     float voltage_at_pin_mv = furi_hal_adc_convert_to_voltage(adc, raw);
     furi_hal_adc_release(adc);
     // Multiply by divider ratio to get actual battery voltage
-    return (uint16_t)(voltage_at_pin_mv * FURI_HAL_POWER_BATTERY_VOLTAGE_DIVIDER_RATIO);
+    return (uint16_t)(voltage_at_pin_mv * FURI_HAL_POWER_BATTERY_VOLTAGE_DIVIDER_RATIO+2700); //fix for km 1a hw error
 }
 
 // Convert battery voltage (mV) to percentage using linear approximation
