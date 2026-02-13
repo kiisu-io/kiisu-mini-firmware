@@ -65,7 +65,6 @@ Make sure you have enough space and clone the source code:
 ```shell
 git clone --recursive https://github.com/flipperdevices/flipperzero-firmware.git
 ```
-
 ## Included Apps from https://github.com/twoelw
 * Kiisu Companion Bridge for Aux MCU flash (https://github.com/twoelw/kiisu-companion-bridge)
 * Kiisu Sensor Hub (https://github.com/twoelw/kiisu-sensor-hub)
