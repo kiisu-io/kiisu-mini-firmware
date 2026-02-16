@@ -80,6 +80,33 @@ FuriMutex* furi_hal_spi_bus_r_mutex = NULL;
 void furi_hal_spi_config_init_early(void) {
     furi_hal_spi_bus_init(&furi_hal_spi_bus_d);
     furi_hal_spi_bus_handle_init(&furi_hal_spi_bus_handle_display);
+
+
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.mosi,
+        GpioModeOutputPushPull,
+        GpioPullNo,
+        GpioSpeedLow,
+        GpioAltFnUnused);
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.mosi, false);
+
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.sck,
+        GpioModeOutputPushPull,
+        GpioPullNo,
+        GpioSpeedLow,
+        GpioAltFnUnused);
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.sck, false);
+
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.miso,
+        GpioModeOutputPushPull,
+        GpioPullNo,
+        GpioSpeedLow,
+        GpioAltFnUnused);
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.miso, false);
+
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.cs, false);
 }
 
 void furi_hal_spi_config_deinit_early(void) {

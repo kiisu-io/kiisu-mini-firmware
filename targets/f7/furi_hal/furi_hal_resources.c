@@ -204,6 +204,19 @@ void furi_hal_resources_init_early(void) {
     LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_8); // gpio_speaker
     LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_9); // gpio_infrared_tx
 
+    // Periph power must stay OFF in SHUTDOWN
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_A, LL_PWR_GPIO_BIT_3); // gpio_periph_power (PA3)
+
+    // SPI2 bus pins pull low to prevent parasitic current
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_15); // SPI2 MOSI (PB15)
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_D, LL_PWR_GPIO_BIT_1); // SPI2 SCK (PD1)
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_C, LL_PWR_GPIO_BIT_2); // SPI2 MISO (PC2)
+
+    // CS and control pins, no harm
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_C, LL_PWR_GPIO_BIT_11); // display CS (PC11)
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_C, LL_PWR_GPIO_BIT_12); // SD card CS (PC12)
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_C, LL_PWR_GPIO_BIT_10); // SD card CD (PC10)
+
     // SD Card stepdown control
     furi_hal_gpio_write(&gpio_periph_power, 0);
     furi_hal_gpio_init(&gpio_periph_power, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
@@ -211,7 +224,7 @@ void furi_hal_resources_init_early(void) {
     // Display pins
     furi_hal_gpio_write(&gpio_display_rst_n, 0);
     furi_hal_gpio_init_simple(&gpio_display_rst_n, GpioModeOutputPushPull);
-    LL_PWR_EnableGPIOPullUp(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_0); // gpio_display_rst_n
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_0); // gpio_display_rst_n
     furi_hal_gpio_write(&gpio_display_di, 0);
     furi_hal_gpio_init_simple(&gpio_display_di, GpioModeOutputPushPull);
     LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_B, LL_PWR_GPIO_BIT_1); // gpio_display_di

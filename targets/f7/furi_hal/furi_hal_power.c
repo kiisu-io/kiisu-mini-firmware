@@ -8,6 +8,9 @@
 #include <furi_hal_debug.h>
 #include <furi_hal_adc.h>
 #include <furi_hal_usb.h>
+#include <furi_hal_spi.h>
+#include <furi_hal_gpio.h>
+#include <furi_hal_version.h>
 
 #include <stm32wbxx_ll_rcc.h>
 #include <stm32wbxx_ll_pwr.h>
@@ -298,13 +301,34 @@ void furi_hal_power_shutdown(void) {
 }
 
 void furi_hal_power_off(void) {
-    // Crutch: shutting down with ext 3V3 off is causing LSE to stop
+    
+    furi_hal_power_disable_external_3_3v();
+
+    // keep RTC alarm output on PC13 for timed wakeup
     furi_hal_rtc_prepare_for_shutdown();
-    furi_hal_power_enable_external_3_3v();
-    // Vibro not available (PA8 used for ADC)
-    furi_delay_us(50000);
-    // TODO: Implement hardware power-off without BQ25896
-    // No charger IC to send poweroff command - fall through to MCU shutdown
+
+    // Clear pull up states before shutdown
+    WRITE_REG(PWR->PUCRA, 0);
+    WRITE_REG(PWR->PDCRA, 0);
+    WRITE_REG(PWR->PUCRB, 0);
+    WRITE_REG(PWR->PDCRB, 0);
+    WRITE_REG(PWR->PUCRC, 0);
+    WRITE_REG(PWR->PDCRC, 0);
+    WRITE_REG(PWR->PUCRD, 0);
+    WRITE_REG(PWR->PDCRD, 0);
+    WRITE_REG(PWR->PUCRE, 0);
+    WRITE_REG(PWR->PDCRE, 0);
+    WRITE_REG(PWR->PUCRH, 0);
+    WRITE_REG(PWR->PDCRH, 0);
+
+    // Set ONLY the minimum needed PWR pulls for SHUTDOWN:
+    // PA3 pull-down: keep periph_power OFF (prevent floating high)
+    LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_A, LL_PWR_GPIO_BIT_3);
+    // PC13 pull-up: OK button / WAKEUP_PIN2 needs defined state for wakeup detection
+    LL_PWR_EnableGPIOPullUp(LL_PWR_GPIO_C, LL_PWR_GPIO_BIT_13);
+
+    // Enter SHUTDOWN mode. Wakeup from SHUTDOWN is equivalent to a power-on reset.
+    // RTC + LSE remain functional (powered from VDD/VBAT domain, not periph_power).
     furi_hal_power_shutdown();
 }
 
@@ -389,11 +413,192 @@ float furi_hal_power_get_usb_voltage(void) {
     return 0.0f;
 }
 
+// send bytes to prevent potential paracitic power 
+static void furi_hal_power_spi2_tx_raw(const uint8_t* data, size_t size) {
+    SPI_TypeDef* spi = SPI2;
+    for(size_t i = 0; i < size; i++) {
+        while(!LL_SPI_IsActiveFlag_TXE(spi))
+            ;
+        LL_SPI_TransmitData8(spi, data[i]);
+    }
+    // Wait for TX complete and drain RX FIFO
+    while(LL_SPI_GetTxFIFOLevel(spi) != LL_SPI_TX_FIFO_EMPTY)
+        ;
+    while(LL_SPI_IsActiveFlag_BSY(spi))
+        ;
+    while(LL_SPI_GetRxFIFOLevel(spi) != LL_SPI_RX_FIFO_EMPTY) {
+        LL_SPI_ReceiveData8(spi);
+    }
+}
+
 void furi_hal_power_enable_external_3_3v(void) {
+    // Enable the peripheral 3V3 rail
     furi_hal_gpio_write(&gpio_periph_power, 1);
+
+    // Let 3V3 rail stabilize
+    furi_delay_ms(5);
+
+    // restore pins
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.mosi,
+        GpioModeAltFunctionPushPull,
+        GpioPullNo,
+        GpioSpeedVeryHigh,
+        GpioAltFn5SPI2);
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.sck,
+        GpioModeAltFunctionPushPull,
+        GpioPullNo,
+        GpioSpeedVeryHigh,
+        GpioAltFn5SPI2);
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.miso,
+        GpioModeAltFunctionPushPull,
+        GpioPullNo,
+        GpioSpeedVeryHigh,
+        GpioAltFn5SPI2);
+
+    // Restore display CS
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.cs, true);
+    furi_hal_gpio_init(
+        furi_hal_spi_bus_handle_display.cs,
+        GpioModeOutputPushPull,
+        GpioPullUp,
+        GpioSpeedVeryHigh);
+
+    // Restore SD card CS
+    furi_hal_gpio_write(&gpio_sdcard_cs, true);
+    furi_hal_gpio_init(
+        &gpio_sdcard_cs,
+        GpioModeOutputPushPull,
+        GpioPullUp,
+        GpioSpeedVeryHigh);
+
+    // Restore SD card detect pin
+    furi_hal_gpio_init(&gpio_sdcard_cd, GpioModeInput, GpioPullUp, GpioSpeedLow);
+
+    // Release display RST
+    furi_hal_gpio_write(&gpio_display_rst_n, 1);
+
+    // Let screen stabilize
+    furi_delay_ms(10);
+
+    // Reinit the screen 
+    {
+        bool bus_was_acquired = (furi_hal_spi_bus_d.current_handle != NULL);
+
+        if(!bus_was_acquired) {
+            furi_hal_spi_acquire(&furi_hal_spi_bus_handle_display);
+        } else {
+            furi_hal_gpio_write(furi_hal_spi_bus_handle_display.cs, false);
+        }
+
+        // D/C low = command mode
+        furi_hal_gpio_write(&gpio_display_di, 0);
+
+        // full init sequence
+        uint8_t contrast = (furi_hal_version_get_hw_display() == FuriHalVersionDisplayMgg) ?
+                               112 : 128;
+        uint8_t init_cmds[] = {
+            0xAE,       // Display OFF
+            0x20, 0x02, // Set Memory Addressing Mode → Page
+            0xD5, 0x80, // Set clock divide ratio
+            0xA8, 0x3F, // Set MUX ratio (64 lines)
+            0xD3, 0x00, // Set display offset
+            0x40,       // Set start line 0
+            0x8D, 0x14, // Enable charge pump
+            0xA1,       // Segment remap ON
+            0xC8,       // COM scan direction DEC
+            0xDA, 0x12, // COM pins config
+            0x81, contrast, // Set contrast
+            0xD9, 0xF1, // Set precharge period
+            0xDB, 0x40, // Set VCOMH deselect level
+            0xA4,       // Resume from entire display on
+            0xA6,       // Normal display (not inverted)
+            0xAF,       // Display ON
+        };
+
+        if(!bus_was_acquired) {
+            furi_hal_spi_bus_tx(
+                &furi_hal_spi_bus_handle_display, init_cmds, sizeof(init_cmds), 1000);
+            furi_hal_spi_release(&furi_hal_spi_bus_handle_display);
+        } else {
+            furi_hal_power_spi2_tx_raw(init_cmds, sizeof(init_cmds));
+            furi_hal_gpio_write(furi_hal_spi_bus_handle_display.cs, true);
+        }
+    }
 }
 
 void furi_hal_power_disable_external_3_3v(void) {
+    // SSD1306 parasitic power prevention:
+    bool bus_was_acquired = (furi_hal_spi_bus_d.current_handle != NULL);
+
+    if(!bus_was_acquired) {
+        furi_hal_spi_acquire(&furi_hal_spi_bus_handle_display);
+    } else {
+
+        furi_hal_gpio_write(furi_hal_spi_bus_handle_display.cs, false);
+    }
+
+    furi_hal_gpio_write(&gpio_display_di, 0);
+
+    if(!bus_was_acquired) {
+        // Display OFF
+        uint8_t cmd_display_off = 0xAE;
+        furi_hal_spi_bus_tx(
+            &furi_hal_spi_bus_handle_display, &cmd_display_off, 1, 100);
+
+        // Disable charge pump
+        uint8_t cmd_charge_pump[2] = {0x8D, 0x10};
+        furi_hal_spi_bus_tx(
+            &furi_hal_spi_bus_handle_display, cmd_charge_pump, 2, 100);
+
+        // Release the bus normally
+        furi_hal_spi_release(&furi_hal_spi_bus_handle_display);
+    } else {
+        uint8_t cmds[3] = {0xAE, 0x8D, 0x10};
+        furi_hal_power_spi2_tx_raw(cmds, sizeof(cmds));
+
+        furi_hal_gpio_write(furi_hal_spi_bus_handle_display.cs, true);
+    }
+
+    furi_delay_ms(20);
+
+    // set all pins low to prevent parasitic power
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.mosi,
+        GpioModeOutputPushPull,
+        GpioPullNo,
+        GpioSpeedLow,
+        GpioAltFnUnused);
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.mosi, false);
+
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.sck,
+        GpioModeOutputPushPull,
+        GpioPullNo,
+        GpioSpeedLow,
+        GpioAltFnUnused);
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.sck, false);
+
+    furi_hal_gpio_init_ex(
+        furi_hal_spi_bus_handle_display.miso,
+        GpioModeOutputPushPull,
+        GpioPullNo,
+        GpioSpeedLow,
+        GpioAltFnUnused);
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.miso, false);
+
+    furi_hal_gpio_write(furi_hal_spi_bus_handle_display.cs, false);
+    furi_hal_gpio_write(&gpio_sdcard_cs, false);
+
+    furi_hal_gpio_write(&gpio_display_di, false);
+
+    furi_hal_gpio_init_simple(&gpio_sdcard_cd, GpioModeOutputOpenDrain);
+    furi_hal_gpio_write(&gpio_sdcard_cd, false);
+
+    furi_hal_gpio_write(&gpio_display_rst_n, false);
+
     furi_hal_gpio_write(&gpio_periph_power, 0);
 }
 
