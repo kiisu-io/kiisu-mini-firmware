@@ -13,6 +13,7 @@
 #include <furi_hal_version.h>
 
 #include <stm32wbxx_ll_rcc.h>
+#include <stm32wbxx_ll_rtc.h>
 #include <stm32wbxx_ll_pwr.h>
 #include <stm32wbxx_ll_hsem.h>
 #include <stm32wbxx_ll_cortex.h>
@@ -296,18 +297,13 @@ void furi_hal_power_shutdown(void) {
     LL_C2_PWR_SetPowerMode(LL_PWR_MODE_SHUTDOWN);
     LL_LPM_EnableDeepSleep();
 
-    __WFI();
-    furi_crash("Insomniac core2");
-}
-
-void furi_hal_power_off(void) {
-    
-    furi_hal_power_disable_external_3_3v();
-
-    // keep RTC alarm output on PC13 for timed wakeup
-    furi_hal_rtc_prepare_for_shutdown();
-
-    // Clear pull up states before shutdown
+    // FINAL unconditional wipe of ALL PWR pull-up/pull-down registers.
+    // This MUST be the last thing before __WFI(). furi_hal_bt_reinit() above
+    // restarts the BLE stack which re-adds PWR pulls via furi_hal_gpio_init().
+    // Without this, BT-enabled shutdown leaks ~500-600µA through accumulated
+    // pulls driving current into unpowered peripherals via ESD clamping diodes.
+    // Interrupts disabled so nothing can sneak in between wipe and WFI.
+    __disable_irq();
     WRITE_REG(PWR->PUCRA, 0);
     WRITE_REG(PWR->PDCRA, 0);
     WRITE_REG(PWR->PUCRB, 0);
@@ -320,16 +316,34 @@ void furi_hal_power_off(void) {
     WRITE_REG(PWR->PDCRE, 0);
     WRITE_REG(PWR->PUCRH, 0);
     WRITE_REG(PWR->PDCRH, 0);
-
-    // Set ONLY the minimum needed PWR pulls for SHUTDOWN:
-    // PA3 pull-down: keep periph_power OFF (prevent floating high)
+    // Only PA3 pull-down (keep periph_power OFF) and PC13 pull-up (OK button wakeup)
     LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_A, LL_PWR_GPIO_BIT_3);
-    // PC13 pull-up: OK button / WAKEUP_PIN2 needs defined state for wakeup detection
     LL_PWR_EnableGPIOPullUp(LL_PWR_GPIO_C, LL_PWR_GPIO_BIT_13);
 
-    // Enter SHUTDOWN mode. Wakeup from SHUTDOWN is equivalent to a power-on reset.
-    // RTC + LSE remain functional (powered from VDD/VBAT domain, not periph_power).
-    furi_hal_power_shutdown();
+    __WFI();
+    furi_crash("Insomniac core2");
+}
+
+void furi_hal_power_off(void) {
+    // Properly shut down display and peripherals, then cut power
+    furi_hal_power_disable_external_3_3v();
+
+    // Enable RTC alarm output on PC13 for potential RTC wakeup.
+    // RTC config is in the backup domain and survives system reset.
+    furi_hal_rtc_prepare_for_shutdown();
+
+    // Deferred shutdown: set flag in unused RTC backup register and reset.
+    // After reset, furi_hal_init_early() detects this flag and enters SHUTDOWN
+    // immediately — before CPU2 (BLE radio core) boots. This guarantees true
+    // SHUTDOWN mode regardless of prior BLE state. Direct WFI-based shutdown
+    // fails when CPU2 is actively running the BLE stack: the STM32WB power
+    // controller requires BOTH CPUs in WFI/WFE to enter SHUTDOWN, and a
+    // running CPU2 holds the system in Stop mode (~500-600uA) instead of
+    // SHUTDOWN (~10uA). The system reset ensures CPU2 never starts (C2BOOT=0
+    // after reset), so only CPU1 needs to WFI.
+    LL_RTC_BAK_SetRegister(RTC, 19, 0xDEAD5077);
+    NVIC_SystemReset();
+    // Does not return — system resets and re-enters main()
 }
 
 FURI_NORETURN void furi_hal_power_reset(void) {

@@ -3,6 +3,8 @@
 #include <furi_hal_memory.h>
 
 #include <stm32wbxx_ll_cortex.h>
+#include <stm32wbxx_ll_pwr.h>
+#include <stm32wbxx_ll_rtc.h>
 
 #define TAG "FuriHal"
 
@@ -17,6 +19,46 @@ void furi_hal_init_early(void) {
     furi_hal_i2c_init_early();
     furi_hal_light_init();
     furi_hal_rtc_init_early();
+
+
+    if(LL_RTC_BAK_GetRegister(RTC, 19) == 0xDEAD5077) {
+        LL_RTC_BAK_SetRegister(RTC, 19, 0); // Clear flag so next boot is normal
+
+        __disable_irq();
+
+        // Why not
+        WRITE_REG(PWR->PUCRA, 0);
+        WRITE_REG(PWR->PDCRA, 0);
+        WRITE_REG(PWR->PUCRB, 0);
+        WRITE_REG(PWR->PDCRB, 0);
+        WRITE_REG(PWR->PUCRC, 0);
+        WRITE_REG(PWR->PDCRC, 0);
+        WRITE_REG(PWR->PUCRD, 0);
+        WRITE_REG(PWR->PDCRD, 0);
+        WRITE_REG(PWR->PUCRE, 0);
+        WRITE_REG(PWR->PDCRE, 0);
+        WRITE_REG(PWR->PUCRH, 0);
+        WRITE_REG(PWR->PDCRH, 0);
+
+        // PA3 pull-down: keep periph_power OFF
+        LL_PWR_EnableGPIOPullDown(LL_PWR_GPIO_A, LL_PWR_GPIO_BIT_3);
+        // PC13 pull-up: OK button / WAKEUP_PIN2 needs defined state
+        LL_PWR_EnableGPIOPullUp(LL_PWR_GPIO_C, LL_PWR_GPIO_BIT_13);
+
+        // Configure wakeup on OK button
+        LL_PWR_SetWakeUpPinPolarityLow(LL_PWR_WAKEUP_PIN2);
+        LL_PWR_EnableWakeUpPin(LL_PWR_WAKEUP_PIN2);
+
+        // Enter SHUTDOWN
+        LL_PWR_SetPowerMode(LL_PWR_MODE_SHUTDOWN);
+        LL_C2_PWR_SetPowerMode(LL_PWR_MODE_SHUTDOWN);
+        LL_LPM_EnableDeepSleep();
+
+        __WFI();
+        // Wakeup from SHUTDOWN = POR, execution never reaches here
+        NVIC_SystemReset();
+    }
+
     furi_hal_version_init();
 }
 
