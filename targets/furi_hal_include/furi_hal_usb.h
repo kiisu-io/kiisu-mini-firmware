@@ -87,12 +87,6 @@ void furi_hal_usb_set_state_callback(FuriHalUsbStateCallback cb, void* ctx);
  */
 void furi_hal_usb_reinit(void);
 
-/** Check if USB device is connected (host sending SOF packets)
- *
- * @return    true if USB host is connected and active
- */
-bool furi_hal_usb_is_connected(void);
-
 #ifdef __cplusplus
 }
 #endif

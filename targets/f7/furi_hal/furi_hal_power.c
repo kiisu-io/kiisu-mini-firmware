@@ -23,6 +23,8 @@
 
 #include <furi.h>
 
+bool furi_hal_usb_is_connected(void);
+
 #define TAG "FuriHalPower"
 
 const GpioPin gpio_periph_power = {.port = GPIOA, .pin = LL_GPIO_PIN_3};
