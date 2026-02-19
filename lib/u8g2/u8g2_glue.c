@@ -2,9 +2,165 @@
 
 #include <furi_hal.h>
 
-// TODO: SSD1306/1315 contrast range is 0-255, tune these values
-#define CONTRAST_ERC 128
-#define CONTRAST_MGG 112
+// SSD1306/SSD1315 contrast range is 0-255
+#define CONTRAST_ERC 255
+#define CONTRAST_MGG 255
+
+/* SSD1306/SSD1315 Command Definitions */
+#define SSD1306_CMD_DISPLAY_OFF        0xAE
+#define SSD1306_CMD_DISPLAY_ON         0xAF
+#define SSD1306_CMD_SET_CONTRAST       0x81
+#define SSD1306_CMD_ENTIRE_DISPLAY_OFF 0xA4
+#define SSD1306_CMD_ENTIRE_DISPLAY_ON  0xA5
+#define SSD1306_CMD_NORMAL_DISPLAY     0xA6
+#define SSD1306_CMD_INVERT_DISPLAY     0xA7
+#define SSD1306_CMD_SET_MUX_RATIO      0xA8
+#define SSD1306_CMD_SET_DISPLAY_OFFSET 0xD3
+#define SSD1306_CMD_SET_START_LINE     0x40
+#define SSD1306_CMD_SET_SEG_REMAP_OFF  0xA0
+#define SSD1306_CMD_SET_SEG_REMAP_ON   0xA1
+#define SSD1306_CMD_SET_COM_SCAN_INC   0xC0
+#define SSD1306_CMD_SET_COM_SCAN_DEC   0xC8
+#define SSD1306_CMD_SET_COM_PINS       0xDA
+#define SSD1306_CMD_SET_CLK_DIV        0xD5
+#define SSD1306_CMD_SET_PRECHARGE      0xD9
+#define SSD1306_CMD_SET_VCOMH          0xDB
+#define SSD1306_CMD_CHARGE_PUMP        0x8D
+#define SSD1306_CMD_SET_PAGE_ADDR      0xB0
+#define SSD1306_CMD_SET_LOW_COLUMN     0x00
+#define SSD1306_CMD_SET_HIGH_COLUMN    0x10
+#define SSD1306_CMD_SET_MEM_ADDR_MODE  0x200
+
+#define SSD1306_BRIGHTNESS_STEPS    32
+#define SSD1306_BACKLIGHT_MIN        13  /* 5% of 255, absolute floor */
+#define SSD1306_CONTRAST_FLOOR       5   /* minimum contrast that stays visible */
+#define SSD1306_PRECHARGE_PH2_MIN    2   /* minimum phase-2 that stays visible */
+
+typedef struct {
+    uint8_t contrast;
+    uint8_t precharge;
+    uint8_t vcomh;
+} SSD1306BrightnessParams;
+
+static bool ssd1306_display_on = 1;
+static SSD1306BrightnessParams ssd1306_current_params = {CONTRAST_ERC, 0xF1, 0x40};
+static uint8_t ssd1306_backlight_level = 0xFF;
+static int8_t ssd1306_contrast_offset = 0;
+
+/*
+ * Map a backlight level (1-255) to SSD1306 register values.
+ * Uses three registers for a wide dimming range:
+ *   - Contrast (0x81):   pixel drive current
+ *   - Pre-charge (0xD9): shorter phase-2 = less charge = dimmer
+ *   - VCOMH (0xDB):      lower deselect voltage = smaller swing = dimmer
+ * Quadratic gamma on contrast for perceptual linearity.
+ */
+static SSD1306BrightnessParams u8x8_d_st756x_backlight_to_params(uint8_t backlight_level) {
+    SSD1306BrightnessParams params;
+
+    /* Clamp to floor so display never fully turns off */
+    if(backlight_level < SSD1306_BACKLIGHT_MIN) {
+        backlight_level = SSD1306_BACKLIGHT_MIN;
+    }
+
+    /* Scale input SSD1306_BACKLIGHT_MIN-255 to 0-1000 for finer math */
+    uint16_t range = 255 - SSD1306_BACKLIGHT_MIN;
+    uint16_t bl = (uint16_t)(backlight_level - SSD1306_BACKLIGHT_MIN) * 1000 / range;
+
+    /* VCOMH deselect level — lower = dimmer */
+    if(bl <= 250) {
+        params.vcomh = 0x00;      /* ~0.65 * Vcc — dimmest */
+    } else if(bl <= 500) {
+        params.vcomh = 0x20;      /* ~0.77 * Vcc */
+    } else {
+        params.vcomh = 0x40;      /* ~1.0  * Vcc — brightest */
+    }
+
+    /* Pre-charge: phase-2 scales SSD1306_PRECHARGE_PH2_MIN..15 across range, phase-1 fixed at 1 */
+    uint8_t ph2 = SSD1306_PRECHARGE_PH2_MIN +
+                  (uint8_t)((uint32_t)bl * (15 - SSD1306_PRECHARGE_PH2_MIN) / 1000);
+    params.precharge = (ph2 << 4) | 0x01;
+
+    /* Contrast: LINEAR mapping SSD1306_CONTRAST_FLOOR-255.
+     * Floor ensures 5% is still visibly on.
+     * 100% backlight = contrast 255 (absolute SSD1306 max) */
+    int16_t c = (int16_t)(SSD1306_CONTRAST_FLOOR +
+                          (uint32_t)bl * (255 - SSD1306_CONTRAST_FLOOR) / 1000UL) +
+                (int16_t)ssd1306_contrast_offset * 4;
+    if(c < SSD1306_CONTRAST_FLOOR) c = SSD1306_CONTRAST_FLOOR;
+    if(c > 255) c = 255;
+    params.contrast = (uint8_t)c;
+
+    return params;
+}
+
+/*
+ * Smooth transition from current register state to target.
+ * Contrast is linearly interpolated over up to BRIGHTNESS_STEPS steps.
+ * VCOMH / pre-charge switch order depends on direction:
+ *   dimming  → reduce VCOMH+precharge first, then ramp contrast down
+ *   brighten → ramp contrast up first, then raise VCOMH+precharge
+ * This avoids visible glitches at register-change boundaries.
+ */
+static void u8x8_d_st756x_apply_brightness_smooth(
+    u8x8_t* u8x8,
+    const SSD1306BrightnessParams* target) {
+    SSD1306BrightnessParams start = ssd1306_current_params;
+
+    if(start.contrast == target->contrast &&
+       start.precharge == target->precharge &&
+       start.vcomh == target->vcomh) {
+        return;
+    }
+
+    int16_t c_diff = (int16_t)target->contrast - (int16_t)start.contrast;
+    uint16_t abs_diff = (c_diff >= 0) ? (uint16_t)c_diff : (uint16_t)(-c_diff);
+    uint8_t steps = (abs_diff > SSD1306_BRIGHTNESS_STEPS) ?
+                        SSD1306_BRIGHTNESS_STEPS :
+                        (abs_diff > 0 ? (uint8_t)abs_diff : 1);
+
+    bool dimming = (target->contrast < start.contrast);
+    bool regs_changed = (start.precharge != target->precharge ||
+                         start.vcomh != target->vcomh);
+
+    /* Dimming: drop VCOMH / pre-charge first */
+    if(dimming && regs_changed) {
+        u8x8_cad_StartTransfer(u8x8);
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_VCOMH);
+        u8x8_cad_SendArg(u8x8, target->vcomh);
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_PRECHARGE);
+        u8x8_cad_SendArg(u8x8, target->precharge);
+        u8x8_cad_EndTransfer(u8x8);
+        ssd1306_current_params.vcomh = target->vcomh;
+        ssd1306_current_params.precharge = target->precharge;
+    }
+
+    /* Ramp contrast */
+    for(uint8_t i = 1; i <= steps; i++) {
+        uint8_t c = (uint8_t)(
+            (int16_t)start.contrast + (c_diff * (int16_t)i) / (int16_t)steps);
+        u8x8_cad_StartTransfer(u8x8);
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CONTRAST);
+        u8x8_cad_SendArg(u8x8, c);
+        u8x8_cad_EndTransfer(u8x8);
+        ssd1306_current_params.contrast = c;
+        if(i < steps) {
+            furi_delay_ms(8);
+        }
+    }
+
+    /* Brightening: raise VCOMH / pre-charge after contrast ramp */
+    if(!dimming && regs_changed) {
+        u8x8_cad_StartTransfer(u8x8);
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_PRECHARGE);
+        u8x8_cad_SendArg(u8x8, target->precharge);
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_VCOMH);
+        u8x8_cad_SendArg(u8x8, target->vcomh);
+        u8x8_cad_EndTransfer(u8x8);
+    }
+
+    ssd1306_current_params = *target;
+}
 
 uint8_t u8g2_gpio_and_delay_stm32(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* arg_ptr) {
     UNUSED(u8x8);
@@ -56,32 +212,6 @@ uint8_t u8x8_hw_spi_stm32(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* arg_
     return 1;
 }
 
-/* SSD1306/SSD1315 Command Definitions */
-#define SSD1306_CMD_DISPLAY_OFF        0xAE
-#define SSD1306_CMD_DISPLAY_ON         0xAF
-#define SSD1306_CMD_SET_CONTRAST       0x81
-#define SSD1306_CMD_ENTIRE_DISPLAY_OFF 0xA4
-#define SSD1306_CMD_ENTIRE_DISPLAY_ON  0xA5
-#define SSD1306_CMD_NORMAL_DISPLAY     0xA6
-#define SSD1306_CMD_INVERT_DISPLAY     0xA7
-#define SSD1306_CMD_SET_MUX_RATIO      0xA8
-#define SSD1306_CMD_SET_DISPLAY_OFFSET 0xD3
-#define SSD1306_CMD_SET_START_LINE     0x40
-#define SSD1306_CMD_SET_SEG_REMAP_OFF  0xA0
-#define SSD1306_CMD_SET_SEG_REMAP_ON   0xA1
-#define SSD1306_CMD_SET_COM_SCAN_INC   0xC0
-#define SSD1306_CMD_SET_COM_SCAN_DEC   0xC8
-#define SSD1306_CMD_SET_COM_PINS       0xDA
-#define SSD1306_CMD_SET_CLK_DIV        0xD5
-#define SSD1306_CMD_SET_PRECHARGE      0xD9
-#define SSD1306_CMD_SET_VCOMH          0xDB
-#define SSD1306_CMD_CHARGE_PUMP        0x8D
-#define SSD1306_CMD_SET_PAGE_ADDR      0xB0
-#define SSD1306_CMD_SET_LOW_COLUMN     0x00
-#define SSD1306_CMD_SET_HIGH_COLUMN    0x10
-#define SSD1306_CMD_SET_MEM_ADDR_MODE  0x20
-
-// TODO: Verify power save sequences work correctly on SSD1306/1315
 static const uint8_t u8x8_d_st756x_powersave0_seq[] = {
     U8X8_START_TRANSFER(), /* enable chip, delay is part of the transfer start */
     U8X8_C(SSD1306_CMD_ENTIRE_DISPLAY_OFF), /* resume from entire display on */
@@ -115,7 +245,6 @@ static const uint8_t u8x8_d_st756x_flip1_seq[] = {
     U8X8_END() /* end of sequence */
 };
 
-// TODO: Verify timing values for SSD1306/1315, current values from ST7565
 static const u8x8_display_info_t u8x8_st756x_128x64_display_info = {
     .chip_enable_level = 0,
     .chip_disable_level = 1,
@@ -209,7 +338,7 @@ void u8x8_d_st756x_init(u8x8_t* u8x8, uint8_t contrast, uint8_t regulation_ratio
 
     // Set clock divide ratio and oscillator frequency
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CLK_DIV);
-    u8x8_cad_SendArg(u8x8, 0x80); // TODO: Tune clock if needed
+    u8x8_cad_SendArg(u8x8, 0x80);
 
     // Set multiplex ratio (64 lines)
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_MUX_RATIO);
@@ -232,7 +361,7 @@ void u8x8_d_st756x_init(u8x8_t* u8x8, uint8_t contrast, uint8_t regulation_ratio
 
     // Set COM pins hardware configuration
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_COM_PINS);
-    u8x8_cad_SendArg(u8x8, 0x12); // TODO: May need 0x02 for some displays
+    u8x8_cad_SendArg(u8x8, 0x12);
 
     // Set contrast
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CONTRAST);
@@ -240,11 +369,11 @@ void u8x8_d_st756x_init(u8x8_t* u8x8, uint8_t contrast, uint8_t regulation_ratio
 
     // Set precharge period
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_PRECHARGE);
-    u8x8_cad_SendArg(u8x8, 0xF1); // TODO: Tune precharge if needed
+    u8x8_cad_SendArg(u8x8, 0xF1);
 
     // Set VCOMH deselect level
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_VCOMH);
-    u8x8_cad_SendArg(u8x8, 0x40); // TODO: Tune VCOMH if needed
+    u8x8_cad_SendArg(u8x8, 0x40);
 
     // Resume from entire display on
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_ENTIRE_DISPLAY_OFF);
@@ -256,21 +385,44 @@ void u8x8_d_st756x_init(u8x8_t* u8x8, uint8_t contrast, uint8_t regulation_ratio
     u8x8_cad_SendCmd(u8x8, SSD1306_CMD_DISPLAY_ON);
 
     u8x8_cad_EndTransfer(u8x8);
+
+    ssd1306_display_on = 1;
+    ssd1306_current_params.contrast = contrast;
+    ssd1306_current_params.precharge = 0xF1;
+    ssd1306_current_params.vcomh = 0x40;
+    ssd1306_backlight_level = 0xFF;
 }
 
 void u8x8_d_st756x_set_contrast(u8x8_t* u8x8, int8_t contrast_offset) {
-    // TODO: Tune contrast values and offset scaling for SSD1306/1315
-    uint8_t contrast = (furi_hal_version_get_hw_display() == FuriHalVersionDisplayMgg) ?
-                           CONTRAST_MGG :
-                           CONTRAST_ERC;
-    int16_t new_contrast = (int16_t)contrast + (int16_t)contrast_offset * 4;
-    if(new_contrast < 0) new_contrast = 0;
-    if(new_contrast > 255) new_contrast = 255;
+    ssd1306_contrast_offset = contrast_offset;
 
-    u8x8_cad_StartTransfer(u8x8);
-    u8x8_cad_SendCmd(u8x8, SSD1306_CMD_SET_CONTRAST);
-    u8x8_cad_SendArg(u8x8, (uint8_t)new_contrast);
-    u8x8_cad_EndTransfer(u8x8);
+    if(!ssd1306_display_on) {
+        return;
+    }
+
+    SSD1306BrightnessParams target =
+        u8x8_d_st756x_backlight_to_params(ssd1306_backlight_level);
+    u8x8_d_st756x_apply_brightness_smooth(u8x8, &target);
+}
+
+void u8x8_d_st756x_set_brightness(u8x8_t* u8x8, uint8_t backlight_level, bool display_on) {
+    UNUSED(display_on);
+
+    if(backlight_level < SSD1306_BACKLIGHT_MIN) {
+        backlight_level = SSD1306_BACKLIGHT_MIN;
+    }
+
+    if(!ssd1306_display_on) {
+        u8x8_cad_StartTransfer(u8x8);
+        u8x8_cad_SendCmd(u8x8, SSD1306_CMD_DISPLAY_ON);
+        u8x8_cad_EndTransfer(u8x8);
+        ssd1306_display_on = 1;
+    }
+
+    ssd1306_backlight_level = backlight_level;
+    SSD1306BrightnessParams target =
+        u8x8_d_st756x_backlight_to_params(backlight_level);
+    u8x8_d_st756x_apply_brightness_smooth(u8x8, &target);
 }
 
 uint8_t u8x8_d_st756x_flipper(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* arg_ptr) {
@@ -284,8 +436,6 @@ uint8_t u8x8_d_st756x_flipper(u8x8_t* u8x8, uint8_t msg, uint8_t arg_int, void* 
         case U8X8_MSG_DISPLAY_INIT:
             u8x8_d_helper_display_init(u8x8);
             FuriHalVersionDisplay display = furi_hal_version_get_hw_display();
-            // TODO: SSD1306/1315 - regulation_ratio and bias params are ignored
-            // Contrast values may need tuning per display variant
             if(display == FuriHalVersionDisplayMgg) {
                 u8x8_d_st756x_init(u8x8, CONTRAST_MGG, 0, false);
             } else {

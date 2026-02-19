@@ -1,6 +1,10 @@
 #include <core/common_defines.h>
 #include <furi_hal_resources.h>
 #include <furi_hal_light.h>
+#include <furi.h>
+#include <gui/gui.h>
+#include <gui/gui_i.h>
+#include <u8g2_glue.h>
 #include <stdint.h>
 
 // LP5562 LED driver stubbed out - no I2C LED hardware present
@@ -11,9 +15,15 @@ void furi_hal_light_init(void) {
 }
 
 void furi_hal_light_set(Light light, uint8_t value) {
-    // LP5562 not present - no LEDs to control
-    UNUSED(light);
-    UNUSED(value);
+    if(light & LightBacklight) {
+        if(furi_record_exists(RECORD_GUI)) {
+            Gui* gui = furi_record_open(RECORD_GUI);
+            uint8_t level = (value == 0) ? 1 : value;
+            u8x8_d_st756x_set_brightness(&gui->canvas->fb.u8x8, level, true);
+            furi_record_close(RECORD_GUI);
+        }
+    }
+
 }
 
 void furi_hal_light_blink_start(Light light, uint8_t brightness, uint16_t on_time, uint16_t period) {
