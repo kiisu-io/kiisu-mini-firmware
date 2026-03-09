@@ -1,12 +1,15 @@
-# Kiisu Mini Firmware
+# Kiisu Smol Firmware
 
-## Flash via Flipper Lab
-1. Install SD Card into Kiisu and format it, connect your Kiisu board via USB
-2. Use this link: [https://lab.flipper.net/?url=https://github.com/kiisu-io/kiisu-firmware/releases/download/v1.1/kiisu-z-f7-update-local.tgz&target=f7&channel=release-cfw&version=kiisu-v1.1](https://lab.flipper.net/?url=https://oksa.ee/kiisu11.tgz&target=f7&channel=release-cfw&version=kiisu-11)
-3. Press Connect (if not connected automatically)
-4. Press Install
+For Kiisu Smol (Mini) V1a (prerelease) only! For Kiisu V4, see [Kiisu V4 Firmware](https://github.com/kiisu-io/kiisu-firmware)
+
+## Create updater package for flashing via qFlipper
+
+```shell
+./fbt updater_package
+```
 
 ## Flash via qFlipper
+
 1. Download qFlipper here: https://flipperzero.one/downloads
 2. Download latest firmware from Releases - you need kiisu-z-f7-update-local.tgz file
 3. Connect your Kiisu board to the PC
@@ -26,14 +29,6 @@ Connect your in-circuit debugger to your Flipper and flash firmware using Flippe
 
 ```shell
 ./fbt flash
-```
-
-## Flashing firmware using USB
-
-Make sure your Flipper is on, and your firmware is functioning. Connect your Flipper with a USB cable and flash firmware using Flipper Build Tool:
-
-```shell
-./fbt flash_usb
 ```
 
 ## Documentation
@@ -63,10 +58,9 @@ Also, see `ReadMe.md` files inside those directories for further details.
 ## Other Resources
 - [Kiisu.io website](https://kiisu.io)
 - [Buy Kiisu here](https://store.rainwalker.ee/products/kiisu-v4)
-- [Documentation, schematics and binaries for Kiisu V4](https://github.com/kiisu-io/kiisu4)
+- [Documentation, schematics and binaries for Kiisu V4 and Kiisu Smol (Mini) V1](https://github.com/kiisu-io/kiisu4)
 - [Our Discord Community](https://discord.gg/kiisu) can help with your questions
   
-- [Aux MCU firmware to support Flipper Zero firmwares](https://github.com/kiisu-io/kiisu4-companion-fw)
 - [Twoelw's GitHub](https://github.com/twoelw) with useful apps and firmware for Kiisu.
 
 - [Cases and stuff for 3D printing on Printables](https://www.printables.com/@planmarks/collections/2364779)
