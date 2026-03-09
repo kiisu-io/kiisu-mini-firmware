@@ -11,7 +11,7 @@ For Kiisu Smol (Mini) V1a (prerelease) only! For Kiisu V4, see [Kiisu V4 Firmwar
 ## Flash via qFlipper
 
 1. Download qFlipper here: https://flipperzero.one/downloads
-2. Download latest firmware from Releases - you need kiisu-z-f7-update-local.tgz file
+2. Download latest firmware from Releases - you need kiisu-v1a-090326-update-local.tgz file
 3. Connect your Kiisu board to the PC
 4. Use Install from file button
 
