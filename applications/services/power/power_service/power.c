@@ -1,10 +1,14 @@
 #include "power_i.h"
+#include "power_settings.h"
+#include "power_settings_filename.h"
 
 #include <furi.h>
 #include <furi_hal.h>
 
 #include <update_util/update_operation.h>
 #include <notification/notification_messages.h>
+
+#include <loader/loader.h>
 
 #define TAG "Power"
 
@@ -192,6 +196,114 @@ static void power_handle_reboot(PowerBootMode mode) {
     furi_hal_power_reset();
 }
 
+static void power_start_auto_poweroff_timer(Power* power) {
+    if(furi_timer_is_running(power->auto_poweroff_timer)) {
+        furi_timer_stop(power->auto_poweroff_timer);
+    }
+    furi_timer_start(
+        power->auto_poweroff_timer, furi_ms_to_ticks(power->settings.auto_poweroff_delay_ms));
+}
+
+static void power_stop_auto_poweroff_timer(Power* power) {
+    if(furi_timer_is_running(power->auto_poweroff_timer)) {
+        furi_timer_stop(power->auto_poweroff_timer);
+    }
+}
+
+static uint32_t power_is_running_auto_poweroff_timer(Power* power) {
+    return furi_timer_is_running(power->auto_poweroff_timer);
+}
+
+// Restart poweroff timer when user presses a key
+static void power_auto_poweroff_callback(const void* value, void* context) {
+    UNUSED(value);
+    furi_assert(context);
+    Power* power = context;
+    power_start_auto_poweroff_timer(power);
+}
+
+// Called when the auto poweroff timer expires
+static void power_auto_poweroff_timer_callback(void* context) {
+    furi_assert(context);
+    Power* power = context;
+    // Don't power off while charging
+    if(power->state != PowerStateNotCharging) {
+        FURI_LOG_D(TAG, "Skipping auto_power_off: battery is charging");
+        power_start_auto_poweroff_timer(power);
+    } else {
+        power_off(power);
+    }
+}
+
+static void power_auto_poweroff_arm(Power* power) {
+    if(power->settings.auto_poweroff_delay_ms) {
+        if(power->input_events_subscription == NULL) {
+            power->input_events_subscription = furi_pubsub_subscribe(
+                power->input_events_pubsub, power_auto_poweroff_callback, power);
+        }
+        power_start_auto_poweroff_timer(power);
+    }
+}
+
+static void power_auto_poweroff_disarm(Power* power) {
+    power_stop_auto_poweroff_timer(power);
+    if(power->input_events_subscription) {
+        furi_pubsub_unsubscribe(power->input_events_pubsub, power->input_events_subscription);
+        power->input_events_subscription = NULL;
+    }
+}
+
+static void power_loader_callback(const void* message, void* context) {
+    furi_assert(context);
+    Power* power = context;
+    const LoaderEvent* event = message;
+
+    if(event->type == LoaderEventTypeApplicationBeforeLoad) {
+        power->app_running = true;
+        power_auto_poweroff_disarm(power);
+    } else if(event->type == LoaderEventTypeNoMoreAppsInQueue) {
+        power->app_running = false;
+        power_auto_poweroff_arm(power);
+    }
+}
+
+static void power_settings_apply(Power* power) {
+    if(power->settings.auto_poweroff_delay_ms && !power->app_running) {
+        power_auto_poweroff_arm(power);
+    } else if(power_is_running_auto_poweroff_timer(power)) {
+        power_auto_poweroff_disarm(power);
+    }
+}
+
+static void power_storage_callback(const void* message, void* context) {
+    furi_assert(context);
+    Power* power = context;
+    const StorageEvent* event = message;
+
+    if(event->type == StorageEventTypeCardMount) {
+        PowerMessage msg = {
+            .type = PowerMessageTypeReloadSettings,
+        };
+        furi_check(
+            furi_message_queue_put(power->message_queue, &msg, FuriWaitForever) == FuriStatusOk);
+    }
+}
+
+static void power_init_settings(Power* power) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    furi_pubsub_subscribe(storage_get_pubsub(storage), power_storage_callback, power);
+
+    if(storage_sd_status(storage) != FSE_OK) {
+        FURI_LOG_D(TAG, "SD Card not ready, skipping settings");
+        furi_record_close(RECORD_STORAGE);
+        return;
+    }
+
+    power_settings_load(&power->settings);
+    power_settings_apply(power);
+    furi_record_close(RECORD_STORAGE);
+}
+
 static void power_message_callback(FuriEventLoopObject* object, void* context) {
     furi_assert(context);
     Power* power = context;
@@ -240,6 +352,20 @@ static void power_message_callback(FuriEventLoopObject* object, void* context) {
         } else {
             furi_hal_power_disable_otg();
         }
+        break;
+    case PowerMessageTypeGetSettings:
+        furi_assert(msg.lock);
+        *msg.settings = power->settings;
+        break;
+    case PowerMessageTypeSetSettings:
+        furi_assert(msg.lock);
+        power->settings = *msg.csettings;
+        power_settings_apply(power);
+        power_settings_save(&power->settings);
+        break;
+    case PowerMessageTypeReloadSettings:
+        power_settings_load(&power->settings);
+        power_settings_apply(power);
         break;
     default:
         furi_crash();
@@ -291,6 +417,14 @@ static Power* power_alloc(void) {
     // Gui
     Gui* gui = furi_record_open(RECORD_GUI);
 
+    // Auto poweroff: subscribe to loader events and input events
+    Loader* loader = furi_record_open(RECORD_LOADER);
+    furi_pubsub_subscribe(loader_get_pubsub(loader), power_loader_callback, power);
+    power->input_events_pubsub = furi_record_open(RECORD_INPUT_EVENTS);
+    // Allocate the auto poweroff timer
+    power->auto_poweroff_timer =
+        furi_timer_alloc(power_auto_poweroff_timer_callback, FuriTimerTypeOnce, power);
+
     power->view_holder = view_holder_alloc();
     power->view_power_off = power_off_alloc();
     power->view_power_unplug_usb = power_unplug_usb_alloc();
@@ -325,9 +459,19 @@ int32_t power_srv(void* p) {
     }
 
     Power* power = power_alloc();
+
+    // Initialize settings (loads from SD card if available, subscribes to storage events)
+    power_init_settings(power);
+
     power_update_info(power);
 
     furi_record_create(RECORD_POWER, power);
+
+    // Determine initial app_running state
+    Loader* loader = furi_record_open(RECORD_LOADER);
+    power->app_running = loader_is_locked(loader);
+    furi_record_close(RECORD_LOADER);
+
     furi_event_loop_run(power->event_loop);
 
     return 0;

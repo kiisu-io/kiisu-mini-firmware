@@ -57,6 +57,11 @@ PowerSettingsApp* power_settings_app_alloc(void) {
     app->submenu = submenu_alloc();
     view_dispatcher_add_view(
         app->view_dispatcher, PowerSettingsAppViewSubmenu, submenu_get_view(app->submenu));
+    app->variable_item_list = variable_item_list_alloc();
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        PowerSettingsAppViewVariableItemList,
+        variable_item_list_get_view(app->variable_item_list));
     app->dialog = dialog_ex_alloc();
     view_dispatcher_add_view(
         app->view_dispatcher, PowerSettingsAppViewDialog, dialog_ex_get_view(app->dialog));
@@ -71,11 +76,16 @@ PowerSettingsApp* power_settings_app_alloc(void) {
         PowerSettingsAppViewSubmenu,
         PowerSettingsAppSceneStart);
 
+    // Load settings from power service
+    power_api_get_settings(app->power, &app->settings);
+
     return app;
 }
 
 void power_settings_app_free(PowerSettingsApp* app) {
     furi_assert(app);
+    // Save settings back to power service
+    power_api_set_settings(app->power, &app->settings);
     // Helper
     submenu_settings_helpers_free(app->settings_helper);
     // Views
@@ -83,6 +93,8 @@ void power_settings_app_free(PowerSettingsApp* app) {
     battery_info_free(app->batery_info);
     view_dispatcher_remove_view(app->view_dispatcher, PowerSettingsAppViewSubmenu);
     submenu_free(app->submenu);
+    view_dispatcher_remove_view(app->view_dispatcher, PowerSettingsAppViewVariableItemList);
+    variable_item_list_free(app->variable_item_list);
     view_dispatcher_remove_view(app->view_dispatcher, PowerSettingsAppViewDialog);
     dialog_ex_free(app->dialog);
     // View dispatcher
