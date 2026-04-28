@@ -1,6 +1,10 @@
 # Kiisu Smol Firmware
 
-For Kiisu Smol (Mini) V1a (prerelease) only! For Kiisu V4, see [Kiisu V4 Firmware](https://github.com/kiisu-io/kiisu-firmware)
+Firmware for **KIISU SMOL** V1a (prerelease) only. For KIISU V4, see [Kiisu V4 Firmware](https://github.com/kiisu-io/kiisu-firmware).
+
+> The board was previously known as *Kiisu Mini*; the official name is now **KIISU SMOL**.
+
+🚀 **KIISU SMOL is currently on [Indiegogo](https://www.indiegogo.com/projects/rainwalker/kiisu-smol---networking-development-board).**
 
 ## Create updater package for flashing via qFlipper
 
@@ -56,12 +60,9 @@ Connect your in-circuit debugger to your Flipper and flash firmware using Flippe
 Also, see `ReadMe.md` files inside those directories for further details.
 
 ## Other Resources
-- [Kiisu.io website](https://kiisu.io)
-- [Buy Kiisu here](https://store.rainwalker.ee/products/kiisu-v4)
-- [Documentation, schematics and binaries for Kiisu V4 and Kiisu Smol (Mini) V1](https://github.com/kiisu-io/kiisu4)
-- [Our Discord Community](https://discord.gg/kiisu) can help with your questions
-  
-- [Twoelw's GitHub](https://github.com/twoelw) with useful apps and firmware for Kiisu.
-
-- [Cases and stuff for 3D printing on Printables](https://www.printables.com/@planmarks/collections/2364779)
-- [Cases and stuff for 3D printing on Makerworld](https://makerworld.com/ru/collections/6517412-kiisu-devboard)
+- [Kiisu.io website](https://kiisu.io) · [KIISU SMOL product page](https://kiisu.io/kiisu-smol/)
+- Get one: [Indiegogo campaign](https://www.indiegogo.com/projects/rainwalker/kiisu-smol---networking-development-board) · [RainWalker store](https://store.rainwalker.ee/)
+- Hardware design files: [kiisu-io/kiisu-smol](https://github.com/kiisu-io/kiisu-smol) (KIISU SMOL) · [kiisu-io/kiisu4](https://github.com/kiisu-io/kiisu4) (KIISU V4)
+- [Discord community](https://discord.gg/kiisu) · [Reddit r/KIISU_IO](https://www.reddit.com/r/KIISU_IO/) · [Telegram](https://t.me/kiisu_io)
+- [Twoelw's GitHub](https://github.com/twoelw) — useful apps and firmware for Kiisu
+- 3D-printable cases: [Printables](https://www.printables.com/@planmarks/collections/2364779) · [MakerWorld](https://makerworld.com/ru/collections/6517412-kiisu-devboard)
